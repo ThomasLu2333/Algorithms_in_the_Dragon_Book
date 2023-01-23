@@ -43,7 +43,7 @@ class DFA:
         while flag:
             flag = False
             for i in range(len(P)):
-                G = [P.pop(0)]
+                G = [P.pop(0)] #Use a deque here for better performance
                 for c in self.sigma:
                     new_G = []
                     for G_i in G:
@@ -298,9 +298,10 @@ class Regex:
         StatesId = {T0: 0}
         DSize = 1
         end_of_exp = self.right_child[self.left_child[0]]
+        sigma_prime = list(set(self.sigma).difference(set(EPSI)))
         while unvisited != set():
             S = unvisited.pop()
-            for a in set(self.sigma).difference():
+            for a in sigma_prime:
                 U = set()
                 for s in S:
                     if self.value[s] == a:
@@ -310,9 +311,10 @@ class Regex:
                     StatesId[U_key] = DSize
                     DSize += 1
                     DStates.add(U_key)
+                    DTran.append(dict(zip(sigma_prime, [-1] * len(sigma_prime))))
                     unvisited.add(U_key)
-                DTran[StatesId[S]][a] = StatesId[U]
-        D = DFA(DSize, self.sigma)
+                DTran[StatesId[S]][a] = StatesId[U_key]
+        D = DFA(DSize, sigma_prime)
         D.next = DTran
         for S in DStates:
             if end_of_exp in S:
@@ -347,55 +349,57 @@ class Regex:
             else:
                 self.lastpos[now] = self.lastpos[self.right_child[now]]
             for i in self.lastpos[self.left_child[now]]:
-                self.followpos[i].extend(self.firstpos[self.right_child[now]])
+                self.followpos[i] = self.followpos[i].union(self.firstpos[self.right_child[now]])
         elif self.value[now] == '*':
             self.get_summaries(self.left_child[now])
             self.nullable[now] = True
             self.firstpos[now] = self.firstpos[self.left_child[now]]
             self.lastpos[now] = self.lastpos[self.left_child[now]]
             for i in self.lastpos[self.left_child[now]]:
-                self.followpos[i].extend(self.firstpos[self.left_child[now]])
+                self.followpos[i] = self.followpos[i].union(self.firstpos[self.left_child[now]])
 
+if __name__ == '__main__':
+    D = DFA(4, ['a', 'b'])
+    D.set_accept(3)
+    D.set_transition(0, 0, 'b')
+    D.set_transition(0, 1, 'a')
+    D.set_transition(1, 1, 'a')
+    D.set_transition(1, 2, 'b')
+    D.set_transition(2, 1, 'a')
+    D.set_transition(2, 3, 'b')
+    D.set_transition(3, 1, 'a')
+    D.set_transition(3, 0, 'b')
+    print(D.match("abababababb"))
+    print(D.match("abba"), "\n")
 
-D = DFA(4, ['a', 'b'])
-D.set_accept(3)
-D.set_transition(0, 0, 'b')
-D.set_transition(0, 1, 'a')
-D.set_transition(1, 1, 'a')
-D.set_transition(1, 2, 'b')
-D.set_transition(2, 1, 'a')
-D.set_transition(2, 3, 'b')
-D.set_transition(3, 1, 'a')
-D.set_transition(3, 0, 'b')
-print(D.match("abababababb"))
-print(D.match("abba"), "\n")
+    N = NFA(11, ['a', 'b'])
+    N.set_accept(10)
+    N.set_transition(0, 1, EPSI)
+    N.set_transition(0, 7, EPSI)
+    N.set_transition(1, 2, EPSI)
+    N.set_transition(1, 4, EPSI)
+    N.set_transition(2, 3, 'a')
+    N.set_transition(4, 5, 'b')
+    N.set_transition(3, 6, EPSI)
+    N.set_transition(5, 6, EPSI)
+    N.set_transition(6, 1, EPSI)
+    N.set_transition(6, 7, EPSI)
+    N.set_transition(7, 8, 'a')
+    N.set_transition(8, 9, 'b')
+    N.set_transition(9, 10, 'b')
+    print(N.match("abababababb"))
+    print(N.match("abba"), "\n")
 
-N = NFA(11, ['a', 'b'])
-N.set_accept(10)
-N.set_transition(0, 1, EPSI)
-N.set_transition(0, 7, EPSI)
-N.set_transition(1, 2, EPSI)
-N.set_transition(1, 4, EPSI)
-N.set_transition(2, 3, 'a')
-N.set_transition(4, 5, 'b')
-N.set_transition(3, 6, EPSI)
-N.set_transition(5, 6, EPSI)
-N.set_transition(6, 1, EPSI)
-N.set_transition(6, 7, EPSI)
-N.set_transition(7, 8, 'a')
-N.set_transition(8, 9, 'b')
-N.set_transition(9, 10, 'b')
-print(N.match("abababababb"))
-print(N.match("abba"), "\n")
+    D_new = N.subset_construction()
+    print(D_new.match("abababababb"))
+    print(D_new.match("abba"))
+    D_new_minimized = D_new.state_minimization()
+    print(D_new_minimized.size)
+    print(D_new_minimized.match("abababababb"))
+    print(D_new_minimized.match("abba"), "\n")
 
-D_new = N.subset_construction()
-print(D_new.match("abababababb"))
-print(D_new.match("abba"))
-D_new_minimized = D_new.state_minimization()
-print(D_new_minimized.size)
-print(D_new_minimized.match("abababababb"))
-print(D_new_minimized.match("abba"), "\n")
-
-R = Regex("*(a | b | c)e(f | g | *(hij))")
-print(R.to_NFA().match("abce#"))
-print(R.to_NFA().match("abcabcehijjjjj#"), "\n")
+    R = Regex("*(a | b)abb")
+    print(R.to_NFA().match("abababababb#"))
+    print(R.to_NFA().match("abba#"))
+    print(R.to_DFA().match("abababababb#"))
+    print(R.to_DFA().match("abba#"), "\n")
