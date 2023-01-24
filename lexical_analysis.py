@@ -140,18 +140,19 @@ class NFA:
         DTran: list[dict[str, int]] = [{}]
         StatesId = {T0: 0}
         DSize = 1
+        sigma_prime = list(set(self.sigma).difference(set(EPSI)))
         while unvisited != set():
             T = unvisited.pop()
-            for a in self.sigma:
+            for a in sigma_prime:
                 U = tuple(sorted(self.epsi_closure(self.move(T, a))))
                 if U not in Dstates:
                     Dstates.add(U)
                     unvisited.add(U)
                     StatesId[U] = DSize
-                    DTran.append(dict(zip(self.sigma, [-1] * len(self.sigma))))
+                    DTran.append(dict(zip(sigma_prime, [-1] * len(sigma_prime))))
                     DSize += 1
                 DTran[StatesId[T]][a] = StatesId[U]
-        D = DFA(DSize, self.sigma)
+        D = DFA(DSize, sigma_prime)
         D.next = DTran
         for Dstate in list(Dstates):
             for NState in Dstate:
@@ -305,7 +306,7 @@ class Regex:
                 U = set()
                 for s in S:
                     if self.value[s] == a:
-                        U.union(self.followpos[s])
+                        U = U.union(self.followpos[s])
                 U_key = tuple(sorted(U))
                 if U_key not in DStates:
                     StatesId[U_key] = DSize
@@ -318,6 +319,7 @@ class Regex:
         D.next = DTran
         for S in DStates:
             if end_of_exp in S:
+                D.set_transition(StatesId[S], StatesId[S], '#')
                 D.set_accept(StatesId[S])
         return D
 
@@ -402,4 +404,4 @@ if __name__ == '__main__':
     print(R.to_NFA().match("abababababb#"))
     print(R.to_NFA().match("abba#"))
     print(R.to_DFA().match("abababababb#"))
-    print(R.to_DFA().match("abba#"), "\n")
+    print(R.to_DFA().match("abba#"))
