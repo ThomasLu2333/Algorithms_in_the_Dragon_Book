@@ -10,7 +10,7 @@ class RESERVED(Enum):
     AND = "."
 
 
-EPSI, ESCAPE, LEFT_BRACKET, RIGHT_BRACKET, STAR, OR, AND = 'ε', '%', RESERVED.LEFT_BRACKET, RESERVED.RIGHT_BRACKET, RESERVED.STAR, RESERVED.OR, RESERVED.AND
+END_OF_STRING, EPSI, ESCAPE, LEFT_BRACKET, RIGHT_BRACKET, STAR, OR, AND = '#', 'ε', '%', RESERVED.LEFT_BRACKET, RESERVED.RIGHT_BRACKET, RESERVED.STAR, RESERVED.OR, RESERVED.AND
 RESERVED_DICT = {i.value: i for i in RESERVED}
 
 
@@ -20,6 +20,7 @@ class DFA:
         self.sigma = sigma
         self.next: list[dict[str, int]] = [dict(zip(sigma, [-1] * len(sigma))) for i in range(self.size)]
         self.accept: list[bool] = [False] * self.size
+        self.now = 0
 
     def set_accept(self, node: int):
         self.accept[node] = True
@@ -27,17 +28,20 @@ class DFA:
     def set_transition(self, start: int, end: int, through: str):
         self.next[start][through] = end
 
-    def match(self, target: str) -> bool:
-        now = 0
-        if self.accept[now]:
-            return True
-        for c in target:
-            now = self.next[now][c]
-            if now == -1:
-                return False
-        if self.accept[now]:
+    def setup_match(self):
+        self.now = 0
+
+    def getchar_match(self, c : str):
+        self.now = self.next[self.now][c]
+        if self.accept[self.now]:
             return True
         return False
+
+    def match(self, target: str) -> bool:
+        self.setup_match()
+        for c in target[:-1]:
+            self.getchar_match(c)
+        return self.getchar_match(target[-1])
 
     def state_minimization(self):
         group = [1 if self.accept[i] else 0 for i in range(self.size)]
@@ -93,6 +97,8 @@ class NFA:
         self.next: list[dict[str, list[int]]] = [dict(zip(sigma + [EPSI], [list() for j in range(len(sigma) + 1)])) for
                                                  i in range(self.size)]
         self.accept: list[bool] = [False] * self.size
+        self.T : list[int] = []
+        self.A : list[int] = []
 
     def set_accept(self, node: int):
         self.accept[node] = True
@@ -130,19 +136,24 @@ class NFA:
                 T_prime.append(i)
         return T_prime
 
-    def match(self, target: str) -> bool:
-        T = self.epsi_closure([0])
-        A = []
+    def setup_match(self):
+        self.T = self.epsi_closure([0])
+        self.A = []
         for i in range(0, self.size):
             if self.accept[i]:
-                A.append(i)
-        if set(T).intersection(set(A)) != set():
-            return True
-        for c in target:
-            T = self.epsi_closure(self.move(T, c))
-        if set(T).intersection(set(A)) != set():
+                self.A.append(i)
+
+    def getchar_match(self, c : str):
+        self.T = self.epsi_closure(self.move(self.T, c))
+        if set(self.T).intersection(set(self.A)) != set():
             return True
         return False
+
+    def match(self, target: str) -> bool:
+        self.setup_match()
+        for c in target[:-1]:
+            self.getchar_match(c)
+        return self.getchar_match(target[-1])
 
     # Using counting sort instead of the built-in sorted function provides better performance
     def subset_construction(self) -> DFA:
@@ -177,7 +188,7 @@ class Regex:
     # the Kleene stars in my system are right-associative instead of left
     def __init__(self, raw: str):
         self.sigma = set()
-        S = list("(" + raw.replace(" ", "") + ")#")
+        S = list("(" + raw.replace(" ", "") + ")" + END_OF_STRING)
         self.S = []
         self.sigma = list(filter(lambda x: x not in RESERVED_DICT and x not in [EPSI, ESCAPE], S))
         # Use a stack here for better performance
@@ -214,8 +225,7 @@ class Regex:
         left_child = self.next_node
         self.next_node += 1
         if mode == OR:
-            if self.S[now_token] not in list(RESERVED) or self.S[now_token] == STAR or self.S[
-                now_token] == LEFT_BRACKET:
+            if self.S[now_token] not in list(RESERVED) or self.S[now_token] == STAR or self.S[now_token] == LEFT_BRACKET:
                 self.parse(now_node, AND)
             else:
                 raise ValueError("Invalid Regex Syntax")
@@ -382,9 +392,9 @@ class Regex:
 
 
 class Token:
-    def __init__(self, name: str):
+    def __init__(self, name: str, lexeme : str):
         self.name = name
-        self.attributes = {}
+        self.attributes = {"lexeme" : lexeme}
 
 
 class Lexical_Analyzer:
@@ -395,6 +405,7 @@ class Lexical_Analyzer:
                 self.engines[name] = Regex(expression).to_NFA()
             else:
                 self.engines[name] = Regex(expression).to_DFA()
+            self.engines[name].setup_match()
         self.input = ""
         self.token_list: list[Token] = []
         self.lexeme_begin = 0
@@ -402,7 +413,7 @@ class Lexical_Analyzer:
         self.preprocessor = preprocessor
 
     def set_input(self, input_str):
-        self.input = self.preprocessor(input_str)
+        self.input = self.preprocessor(input_str) + END_OF_STRING
         self.token_list = []
         self.lexeme_begin = 0
         self.forward = 0
@@ -412,10 +423,27 @@ class Lexical_Analyzer:
             return False
         matched = []
         previously_matched = []
-        while self.forward < len(self.input):
+        lexeme = ""
+        while self.forward < len(self.input) and self.input[self.forward] != END_OF_STRING:
             c = self.input[self.forward]
+            lexeme += c
             self.forward += 1
-            # TODO: modularize the match() method for NFA and DFA and finish off the method
+            for name, E in zip(self.engines.keys(), self.engines.values()):
+                E.getchar_match(c)
+                E_T = E.T
+                if E.getchar_match(END_OF_STRING):
+                    E.T = E_T
+                    matched.append(name)
+            if not matched and previously_matched:
+                new_token = Token(previously_matched[0], lexeme[:-1])
+                self.token_list.append(new_token)
+                self.forward -= 1
+                self.lexeme_begin = self.forward
+                for E in self.engines.values():
+                    E.setup_match()
+                return new_token
+            previously_matched = matched
+        raise ValueError("Lexical Error")
 
 
 if __name__ == '__main__':
