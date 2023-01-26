@@ -397,7 +397,7 @@ class Token:
         self.attributes = {"lexeme" : lexeme}
 
 
-class Lexical_Analyzer:
+class LexicalAnalyzer:
     def __init__(self, patterns: list[str, str], mode: str, preprocessor: Callable[[str], str] = lambda x: x):
         self.engines: dict[str: DFA | NFA] = {}
         for name, expression in patterns:
