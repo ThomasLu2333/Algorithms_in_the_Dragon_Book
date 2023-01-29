@@ -6,7 +6,7 @@ class CFG:
 
     # The productions need to be in a particular form where the terminals (representing the tokens) are wrapped by []
     # brackets and non-terminals by <> brackets
-    def __init__(self, productions: list[str], normalize=False):
+    def __init__(self, productions: list[str]):
         self.productions: dict[str, list[list[str]]] = {}
         self.sigma = set()
         for production in productions:
@@ -48,7 +48,7 @@ class CFG:
         self.set_FIRST()
         self.set_FOLLOW()
 
-    def eliminate_epsilon_productions(self, head : str = None) -> bool:
+    def eliminate_epsilon_productions(self, head: str = None) -> bool:
         if head is None:
             self.visited = dict(zip(self.symbols, [False] * len(self.id)))
             return self.eliminate_epsilon_productions(self.start_symbol)
@@ -73,10 +73,10 @@ class CFG:
                             new_bodies.append(null_new_body)
                     nullable_body = nullable_body and nullable_symbol
             self.nullable[head] = self.nullable[head] or nullable_body
-        self.productions[head] = list(filter(lambda x : not x and x != [], new_bodies))
+        self.productions[head] = list(filter(lambda x: not x and x != [], new_bodies))
         return self.nullable[head]
 
-    def eliminate_cycles(self, head : str = None):
+    def eliminate_cycles(self, head: str = None):
         if head is None:
             self.visited = dict(zip(self.symbols, [False] * len(self.id)))
             self.eliminate_cycles(self.start_symbol)
@@ -92,7 +92,6 @@ class CFG:
                 for next_body in self.productions[body[0]]:
                     if len(next_body) != 1 or body[0] in self.sigma:
                         self.productions[head].append(deepcopy(next_body))
-
 
     def eliminate_left_recursion(self):
         id = {name: i for i, name in enumerate(self.productions.keys())}
@@ -116,7 +115,31 @@ class CFG:
 
     def extract_left_factors(self):
         for head in self.productions.keys():
-            pass
+            max_len = max([len(body) for body in self.productions[head]]) + 1
+            partitions = [self.productions[head]]
+            for i in range(max_len):
+                new_partitions = []
+                new_partition_dict = {}
+                matches = []
+                for partition in partitions:
+                    for body in partition:
+                        if i <= len(body) - 1:
+                            new_partition_dict[body[i]].append(body)
+                        else:
+                            matches.append(body)
+                    for new_partition in new_partition_dict.values():
+                        if len(new_partition) == 1:
+                            matches.extend(new_partition[0])
+                        else:
+                            new_partitions.append(new_partition)
+                    if i != 0 and matches:
+                        left_factor = matches[0][:i]
+                        left_factor_name = ",".join(left_factor)
+                        self.productions[left_factor_name] = [left_factor]
+                        for body in matches:
+                            del body[:i]
+                            body.insert(0, left_factor_name)
+                partitions = new_partitions
 
     def set_FIRST(self, head: str = None):
 
