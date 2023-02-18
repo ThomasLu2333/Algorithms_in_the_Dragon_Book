@@ -8,9 +8,10 @@ class RESERVED(Enum):
     STAR = "*"
     OR = "|"
     AND = "."
+    SPACE = "\s"
 
 
-END_OF_STRING, EPSI, ESCAPE, LEFT_BRACKET, RIGHT_BRACKET, STAR, OR, AND = '#', 'ε', '%', RESERVED.LEFT_BRACKET, RESERVED.RIGHT_BRACKET, RESERVED.STAR, RESERVED.OR, RESERVED.AND
+SPACE, END_OF_STRING, EPSI, ESCAPE, LEFT_BRACKET, RIGHT_BRACKET, STAR, OR, AND = '\s','#', 'ε', '%', RESERVED.LEFT_BRACKET, RESERVED.RIGHT_BRACKET, RESERVED.STAR, RESERVED.OR, RESERVED.AND
 RESERVED_DICT = {i.value: i for i in RESERVED}
 
 
@@ -18,9 +19,11 @@ class DFA:
     def __init__(self, size: int, sigma: list[str]):
         self.size = size
         self.sigma = sigma
+        self.sigma_len = len(sigma)
         self.next: list[dict[str, int]] = [dict(zip(sigma, [-1] * len(sigma))) for i in range(self.size)]
         self.accept: list[bool] = [False] * self.size
-        self.now = 0
+        self.T = 0
+        self.dead_states = []
 
     def set_accept(self, node: int):
         self.accept[node] = True
@@ -29,11 +32,16 @@ class DFA:
         self.next[start][through] = end
 
     def setup_match(self):
-        self.now = 0
+        self.T = 0
 
-    def getchar_match(self, c : str):
-        self.now = self.next[self.now][c]
-        if self.accept[self.now]:
+    def find_dead_states(self):
+        for i in range(self.size):
+            if list(self.next[i].values()) == [i] * self.sigma_len or list(self.next[i].values()) == [-(self.size - i)] * self.sigma_len:
+                self.dead_states.append(i)
+
+    def getchar_match(self, c: str):
+        self.T = self.next[self.T][c]
+        if self.accept[self.T]:
             return True
         return False
 
@@ -97,8 +105,9 @@ class NFA:
         self.next: list[dict[str, list[int]]] = [dict(zip(sigma + [EPSI], [list() for j in range(len(sigma) + 1)])) for
                                                  i in range(self.size)]
         self.accept: list[bool] = [False] * self.size
-        self.T : list[int] = []
-        self.A : list[int] = []
+        self.T: list[int] = []
+        self.A: list[int] = []
+        self.dead_states = []
 
     def set_accept(self, node: int):
         self.accept[node] = True
@@ -136,6 +145,14 @@ class NFA:
                 T_prime.append(i)
         return T_prime
 
+    def find_dead_states(self):
+        for i in range(self.size):
+            flag = True
+            for states in self.next[i].values():
+                flag = flag and (states == [] or set(states) == {i} or set(states) == {-(self.size - i)})
+            if flag:
+                self.dead_states.append(i)
+
     def setup_match(self):
         self.T = self.epsi_closure([0])
         self.A = []
@@ -143,7 +160,7 @@ class NFA:
             if self.accept[i]:
                 self.A.append(i)
 
-    def getchar_match(self, c : str):
+    def getchar_match(self, c: str):
         self.T = self.epsi_closure(self.move(self.T, c))
         if set(self.T).intersection(set(self.A)) != set():
             return True
@@ -190,19 +207,30 @@ class Regex:
         self.sigma = set()
         S = list("(" + raw.replace(" ", "") + ")" + END_OF_STRING)
         self.S = []
-        self.sigma = list(filter(lambda x: x not in RESERVED_DICT and x not in [EPSI, ESCAPE], S))
+        self.sigma = set()
         # Use a stack here for better performance
         while S:
             c = S.pop(0)
-            if c == ESCAPE:
+            if c == '\\' and S[0] == 's':
+                S.pop(0)
+                self.S.append(" ")
+                self.sigma.add(" ")
+            elif c == ESCAPE:
                 c = S.pop(0)
                 self.S.append(c)
+                self.sigma.add(c)
             elif c == "*" and S[0] != "(":
-                self.S.extend([STAR, RESERVED.LEFT_BRACKET, S.pop(0), RESERVED.RIGHT_BRACKET])
-            elif c not in RESERVED_DICT or c == EPSI:
+                c = S.pop(0)
+                self.sigma.add(c)
+                self.S.extend([STAR, RESERVED.LEFT_BRACKET, c, RESERVED.RIGHT_BRACKET])
+            elif c == EPSI:
                 self.S.append(c)
+            elif c not in RESERVED_DICT:
+                self.S.append(c)
+                self.sigma.add(c)
             else:
                 self.S.append(RESERVED_DICT[c])
+        self.sigma = list(self.sigma)
         self.N = NFA(len(self.S) * 4, self.sigma)
         self.value: list[str | RESERVED] = [""] * (len(self.S) * 4)
         self.left_child: list[None | int] = [None] * (len(self.S) * 4)
@@ -225,7 +253,8 @@ class Regex:
         left_child = self.next_node
         self.next_node += 1
         if mode == OR:
-            if self.S[now_token] not in list(RESERVED) or self.S[now_token] == STAR or self.S[now_token] == LEFT_BRACKET:
+            if self.S[now_token] not in list(RESERVED) or self.S[now_token] == STAR or self.S[
+                now_token] == LEFT_BRACKET:
                 self.parse(now_node, AND)
             else:
                 raise ValueError("Invalid Regex Syntax")
@@ -345,12 +374,16 @@ class Regex:
                     DTran.append(dict(zip(sigma_prime, [-1] * len(sigma_prime))))
                     unvisited.add(U_key)
                 DTran[StatesId[S]][a] = StatesId[U_key]
-        D = DFA(DSize, sigma_prime)
-        D.next = DTran
+        DTran.append(dict(zip(sigma_prime, [DSize + 1] * len(sigma_prime))))
+        DSize += 1
+        DTran.append(dict(zip(sigma_prime, [-1] * len(sigma_prime))))
+        DSize += 1
         for S in DStates:
             if end_of_exp in S:
-                D.set_transition(StatesId[S], StatesId[S], '#')
-                D.set_accept(StatesId[S])
+                DTran[StatesId[S]]['#'] = DSize - 2
+        D = DFA(DSize, sigma_prime)
+        D.next = DTran
+        D.set_accept(DSize - 2)
         return D
 
     def get_summaries(self, now):
@@ -392,19 +425,21 @@ class Regex:
 
 
 class Token:
-    def __init__(self, name: str, lexeme : str):
+    def __init__(self, name: str, lexeme: str):
         self.name = name
-        self.attributes = {"lexeme" : lexeme}
+        self.attributes = {"lexeme": lexeme}
 
 
+#TODO: modify the class so that it prefers a longer prefix over a shorter one
 class LexicalAnalyzer:
-    def __init__(self, patterns: list[str, str], mode: str, preprocessor: Callable[[str], str] = lambda x: x):
+    def __init__(self, patterns: list[list[str]], mode: str, preprocessor: Callable[[str], str] = lambda x: x):
         self.engines: dict[str: DFA | NFA] = {}
         for name, expression in patterns:
             if mode == 'NFA':
                 self.engines[name] = Regex(expression).to_NFA()
             else:
                 self.engines[name] = Regex(expression).to_DFA()
+            self.engines[name].find_dead_states()
             self.engines[name].setup_match()
         self.input = ""
         self.token_list: list[Token] = []
@@ -419,30 +454,48 @@ class LexicalAnalyzer:
         self.forward = 0
 
     def get_next_token(self) -> Token | bool:
-        if self.forward >= len(self.input):
+        self.forward = self.lexeme_begin
+        if self.forward >= len(self.input) - 1:
             return False
+        matching = list(self.engines.keys())
         matched = []
-        previously_matched = []
+        unmatched = []
+        last_matched_pos = -1
         lexeme = ""
-        while self.forward < len(self.input) and self.input[self.forward] != END_OF_STRING:
+        while self.forward < len(self.input):
             c = self.input[self.forward]
             lexeme += c
-            self.forward += 1
-            for name, E in zip(self.engines.keys(), self.engines.values()):
-                E.getchar_match(c)
-                E_T = E.T
-                if E.getchar_match(END_OF_STRING):
+            new_matching = []
+            new_unmatched = unmatched
+            new_matched = []
+            for name in matching + matched:
+                E = self.engines[name]
+                if c in E.sigma:
+                    E.getchar_match(c)
+                    E_T = E.T
+                    if ((type(E.T) == int and E.T in set(E.dead_states))
+                            or (type(E.T) == list and set(E.T).issubset(set(E.dead_states)))):
+                        new_unmatched.append(name)
+                    elif E.getchar_match(END_OF_STRING):
+                        new_matched.append(name)
+                    else:
+                        new_matching.append(name)
                     E.T = E_T
-                    matched.append(name)
-            if not matched and previously_matched:
-                new_token = Token(previously_matched[0], lexeme[:-1])
+                else:
+                    new_unmatched.append(name)
+            if new_matched:
+                last_matched_pos = self.forward
+            if not new_matching and not new_matched and matched:
+                new_token = Token(matched[0], lexeme[:last_matched_pos + 1])
                 self.token_list.append(new_token)
-                self.forward -= 1
-                self.lexeme_begin = self.forward
+                self.lexeme_begin = last_matched_pos + 1
                 for E in self.engines.values():
                     E.setup_match()
                 return new_token
-            previously_matched = matched
+            matching = new_matching
+            matched = new_matched
+            unmatched = new_unmatched
+            self.forward += 1
         raise ValueError("Lexical Error")
 
 
@@ -486,8 +539,45 @@ if __name__ == '__main__':
     print(D_new_minimized.match("abababababb"))
     print(D_new_minimized.match("abba"), "\n")
 
-    R = Regex("*(a | b)abb")
-    print(R.to_NFA().match("abababababb#"))
-    print(R.to_NFA().match("abba#"))
-    print(R.to_DFA().match("abababababb#"))
-    print(R.to_DFA().match("abba#"))
+    R_N = Regex("*(a | b)abb").to_NFA()
+    R_D = Regex("*(a | b)abb").to_DFA()
+    print(R_N.match("abababababb#"))
+    print(R_N.match("abba#"))
+    print(R_D.match("abababababb#"))
+    print(str(R_D.match("abba#")) + "\n")
+
+    Lexer = LexicalAnalyzer([["id", "(a|b|c|d|e|_)*(_|a|b|c|d|e|1|2|3|4|5|0)"],
+                             ["SPACE", "*(\s | \n)"],
+                             ["type", "int | string | boolean"],
+                             ["literal", "TRUE | FALSE | *(1|2|3|4|5|0)"],
+                             ["ASSIGN", "="],
+                             ["LBRACKET", "%("],
+                             ["RBRACKET", "%)"],
+                             ["ADD", "+"],
+                             ["SUBTRACT", "-"],
+                             ["DIVIDE", "/"],
+                             ["MULTIPLY", "%*"],
+                             ["ENDCLAUSE", ";"]],
+                            'NFA')
+    Lexer.set_input("int aa = 10;"
+                    "int bb = 20;"
+                    "string cdcd = a * b + (a - b);"
+                    "boolean ee = TRUE;")
+    token = Lexer.get_next_token()
+    while token:
+        print(token.name)
+        token = Lexer.get_next_token()
+    print()
+    Lexer.set_input("int aaf = 10;"
+                    "int bb = 20;"
+                    "int cdcd = a * b + (a - b);"
+                    "boolean ee = TRUE;")
+    token = Lexer.get_next_token()
+    while token:
+        try:
+            print(token.name)
+            token = Lexer.get_next_token()
+        except ValueError as e:
+            print("Lexical Error")
+            break
+
